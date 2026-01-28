@@ -2,8 +2,7 @@ name: CI - Healthcheck
 
 on:
   pull_request:
-    branches:
-      - main
+    branches: [ "main" ]
 
 jobs:
   healthcheck:
@@ -14,7 +13,8 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t f1-api:ci .
+        run: |
+          docker build -f app/Dockerfile -t f1-api:ci ./app
 
       - name: Run container
         run: |
@@ -25,11 +25,18 @@ jobs:
             f1-api:ci
 
       - name: Wait for API to be ready
-        run: sleep 5
-
-      - name: Healthcheck
         run: |
-          curl -f http://localhost:3000/health
+          for i in {1..20}; do
+            if curl -fsS http://localhost:3000/health > /dev/null; then
+              echo "API is up!"
+              exit 0
+            fi
+            echo "Waiting API..."
+            sleep 2
+          done
+          echo "API did not become ready in time"
+          docker logs f1-api-ci || true
+          exit 1
 
       - name: Stop container
         if: always()

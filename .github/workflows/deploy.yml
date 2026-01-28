@@ -1,0 +1,66 @@
+name: Deploy to EC2
+
+on:
+  workflow_run:
+    workflows: ["Build and Push Docker Image (GHCR)"]
+    types:
+      - completed
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+
+            OWNER="${{ github.repository_owner }}"
+            IMAGE="ghcr.io/${OWNER}/f1-api"
+            TAG="latest"
+
+            mkdir -p /opt/f1-api
+            cd /opt/f1-api
+
+            cat > docker-compose.prod.yml << 'EOF'
+            services:
+              db:
+                image: postgres:16-alpine
+                environment:
+                  POSTGRES_PASSWORD: postgres
+                  POSTGRES_USER: postgres
+                  POSTGRES_DB: f1
+                ports:
+                  - "5432:5432"
+                healthcheck:
+                  test: ["CMD-SHELL", "pg_isready -U postgres"]
+                  interval: 5s
+                  timeout: 3s
+                  retries: 10
+
+              api:
+                image: __IMAGE__:__TAG__
+                environment:
+                  PORT: 3000
+                depends_on:
+                  db:
+                    condition: service_healthy
+                ports:
+                  - "3000:3000"
+            EOF
+
+            sed -i "s|__IMAGE__|$IMAGE|g; s|__TAG__|$TAG|g" docker-compose.prod.yml
+
+            # Login no GHCR (se o pacote for privado, isso é obrigatório)
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin || true
+
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d
+
+            docker ps
