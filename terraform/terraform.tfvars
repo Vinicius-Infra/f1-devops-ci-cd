@@ -1,0 +1,3 @@
+key_name         = "f1-devops-key"
+aws_region       = "us-east-1"
+allowed_ssh_cidr = "0.0.0.0/0"
