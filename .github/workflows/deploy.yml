@@ -3,8 +3,7 @@ name: Deploy to EC2
 on:
   workflow_run:
     workflows: ["Build and Push Docker Image (GHCR)"]
-    types:
-      - completed
+    types: [completed]
 
 jobs:
   deploy:
@@ -21,46 +20,20 @@ jobs:
           script: |
             set -e
 
-            OWNER="${{ github.repository_owner }}"
-            IMAGE="ghcr.io/${OWNER}/f1-api"
+            OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+            IMAGE="ghcr.io/$OWNER/f1-api"
             TAG="latest"
 
-            mkdir -p /opt/f1-api
-            cd /opt/f1-api
+            docker pull "$IMAGE:$TAG"
 
-            cat > docker-compose.prod.yml << 'EOF'
-            services:
-              db:
-                image: postgres:16-alpine
-                environment:
-                  POSTGRES_PASSWORD: postgres
-                  POSTGRES_USER: postgres
-                  POSTGRES_DB: f1
-                ports:
-                  - "5432:5432"
-                healthcheck:
-                  test: ["CMD-SHELL", "pg_isready -U postgres"]
-                  interval: 5s
-                  timeout: 3s
-                  retries: 10
+            docker rm -f f1-api || true
 
-              api:
-                image: __IMAGE__:__TAG__
-                environment:
-                  PORT: 3000
-                depends_on:
-                  db:
-                    condition: service_healthy
-                ports:
-                  - "3000:3000"
-            EOF
+            docker run -d \
+              --name f1-api \
+              --restart unless-stopped \
+              -p 3000:3000 \
+              -e PORT=3000 \
+              "$IMAGE:$TAG"
 
-            sed -i "s|__IMAGE__|$IMAGE|g; s|__TAG__|$TAG|g" docker-compose.prod.yml
-
-            # Login no GHCR (se o pacote for privado, isso é obrigatório)
-            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.GHCR_USERNAME }}" --password-stdin || true
-
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d
-
-            docker ps
+            sleep 2
+            curl -fsS http://localhost:3000/health
